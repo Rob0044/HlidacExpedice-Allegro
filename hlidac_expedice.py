@@ -75,11 +75,11 @@ def load_tokens():
         with open(TOKEN_FILE, "r") as f:
             return json.load(f)
     return {"access_token": INITIAL_ACCESS_TOKEN, "refresh_token": INITIAL_REFRESH_TOKEN}
-
+ 
 def save_tokens(access_token, refresh_token):
     with open(TOKEN_FILE, "w") as f:
         json.dump({"access_token": access_token, "refresh_token": refresh_token}, f)
-
+ 
 def refresh_allegro_token(refresh_token):
     auth_b64 = base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
     response = requests.post(
@@ -89,26 +89,26 @@ def refresh_allegro_token(refresh_token):
     )
     response.raise_for_status()
     return response.json()
-
+ 
 current_tokens = load_tokens()
 save_tokens(current_tokens["access_token"], current_tokens["refresh_token"])
-
+ 
 def load_notes():
     if os.path.exists(NOTES_FILE):
         with open(NOTES_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
-
+ 
 def save_notes(notes):
     with open(NOTES_FILE, "w", encoding="utf-8") as f:
         json.dump(notes, f, indent=4, ensure_ascii=False)
-
+ 
 # ==========================================
 # KOMUNIKACE S API
 # ==========================================
 FETCH_LIMIT       = 100
 FETCH_TOTAL_MAX   = 1000 
-
+ 
 def fetch_orders_from_allegro():
     global current_tokens
     url = "https://api.allegro.pl/order/checkout-forms"
@@ -153,14 +153,14 @@ def fetch_orders_from_allegro():
  
     print(f"  ✅ Celkem platných objednávek v systému: {len(all_orders)}")
     return all_orders
-
+ 
 def is_toptrans(order):
     try:
         name = order["delivery"]["method"]["name"] or ""
         return "toptrans" in name.lower()
     except (KeyError, TypeError):
         return False
-
+ 
 def get_allegro_waybill(order_id):
     global current_tokens
     url = f"https://api.allegro.pl/order/checkout-forms/{order_id}/shipments"
@@ -184,7 +184,7 @@ def get_allegro_waybill(order_id):
     except Exception as e:
         print(f"  ⚠️  Chyba waybill {order_id}: {e}")
     return None
-
+ 
 def fetch_toptrans_batch(waybills):
     url = f"{TOPTRANS_API}/order/search/"
     result = {}
@@ -204,7 +204,7 @@ def fetch_toptrans_batch(waybills):
         except Exception as e:
             print(f"  ❌ TopTrans batch chyba: {e}")
     return result
-
+ 
 # ==========================================
 # ZPRACOVÁNÍ DAT
 # ==========================================
@@ -212,7 +212,7 @@ def categorize_orders(db_data):
     now = datetime.now(timezone.utc)
     notes_db = load_notes()
     candidates = {}
-
+ 
     for order_id, order in db_data.items():
         if order.get("status") not in ["READY_FOR_PROCESSING", "BOUGHT", "FILLED_IN"]:
             continue
@@ -283,7 +283,8 @@ def categorize_orders(db_data):
  
         order_summary = {
             "id": order_id,
-            "cele_jmeno": cele_jmeno, # <-- Změněno z "jmeno" na "cele_jmeno"
+            "login": order.get("buyer", {}).get("login", ""),
+            "cele_jmeno": cele_jmeno,
             "zbyva_casu": str(time_left).split(".")[0],
             "cilovy_cas_expedice": target_time_str,
             "polozky": ", ".join(item_names),
@@ -303,7 +304,7 @@ def sync_orders():
     # Stáhneme aktuální aktivní objednávky rovnou do slovníku a pošleme do GUI
     live_orders = fetch_orders_from_allegro()
     return categorize_orders(live_orders)
-
+ 
 # ==========================================
 # GUI ČÁST
 # ==========================================
@@ -325,23 +326,30 @@ def show_context_menu(event, tree):
     if item:
         tree.selection_set(item)
         tree.focus(item)
-        order_id = tree.item(item, "values")[0]
-        
+        values = tree.item(item, "values")
+        order_id = values[0]
+        login    = values[1]
+ 
         menu = tk.Menu(tree, tearoff=0)
         menu.add_command(
-            label="🌐 Otevřít objednávku v prohlížeči", 
+            label="🌐 Otevřít objednávku v prohlížeči",
             font=("Arial", 10, "bold"),
             command=lambda: open_order_in_browser(order_id)
         )
+        menu.add_command(
+            label=f"📋 Kopírovat login: {login}",
+            font=("Arial", 10),
+            command=lambda l=login: (tree.clipboard_clear(), tree.clipboard_append(l))
+        )
         menu.post(event.x_root, event.y_root)
-
+ 
 def edit_note_dialog(event, tree):
     item = tree.identify_row(event.y)
     if not item:
         return
     
     order_id = tree.item(item, "values")[0]
-    current_note = tree.item(item, "values")[7].replace("🔴 ", "")
+    current_note = tree.item(item, "values")[8].replace("🔴 ", "")
  
     win = tk.Toplevel()
     win.title("Upravit poznámku")
@@ -371,7 +379,7 @@ def edit_note_dialog(event, tree):
         save_notes(notes)
         
         vals = list(tree.item(item, "values"))
-        vals[7] = zobrazovany_text
+        vals[8] = zobrazovany_text
         tree.item(item, values=vals)
         win.destroy()
  
@@ -384,7 +392,7 @@ def edit_note_dialog(event, tree):
     
     win.bind("<Return>", ulozit)
     win.bind("<Escape>", lambda e: win.destroy())
-
+ 
 def populate_tree(tree, data_list, is_delayed=False):
     for item in tree.get_children():
         tree.delete(item)
@@ -397,7 +405,8 @@ def populate_tree(tree, data_list, is_delayed=False):
         
         values = (
             order['id'],
-            order['cele_jmeno'], # <-- Změněno z "jmeno" na "cele_jmeno"
+            order.get('login', ''),
+            order['cele_jmeno'],
             order['polozky'],
             order['stav_vyrizeni'],
             order.get('stav_zasilky', ''),
@@ -421,12 +430,12 @@ def refresh_data(trees, root):
     except Exception as e:
         root.title(f"Chyba při aktualizaci: {e}")
         print(f"Došlo k chybě: {e}")
-
+ 
 def create_table(parent, title, is_delayed=False):
     frame = tk.LabelFrame(parent, text=title, font=("Arial", 11, "bold"), padx=10, pady=10)
     frame.pack(fill="both", expand=True, padx=10, pady=5)
     
-    columns = ("id", "cele_jmeno", "polozky", "stav", "stav_zasilky", "cas", "zbyva", "poznamka")
+    columns = ("id", "login", "cele_jmeno", "polozky", "stav", "stav_zasilky", "cas", "zbyva", "poznamka")
     display_columns = ("cele_jmeno", "polozky", "stav", "stav_zasilky", "cas", "zbyva", "poznamka") if not is_delayed else ("cele_jmeno", "polozky", "stav", "stav_zasilky", "cas", "poznamka")
     tree = ttk.Treeview(frame, columns=columns, displaycolumns=display_columns, show="headings", height=8)
     
