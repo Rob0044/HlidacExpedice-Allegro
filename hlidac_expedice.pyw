@@ -415,6 +415,24 @@ def populate_tree(tree, data_list, is_delayed=False):
             zobrazena_poznamka
         )
         tree.insert('', tk.END, values=values)
+
+def sort_tree_by_date(tree, col="cas", descending=True):
+    """Seřadí Treeview podle sloupce s datem expedice."""
+    data = []
+    for item in tree.get_children(''):
+        val = tree.set(item, col)
+        try:
+            # Formát musí odpovídat tomu, co vrací format_time_for_gui
+            date_val = datetime.strptime(val, "%d.%m.%Y %H:%M")
+        except ValueError:
+            # Pokud chybí čas, spadne to na dno
+            date_val = datetime.min 
+        data.append((date_val, item))
+
+    data.sort(reverse=descending)
+
+    for index, (val, item) in enumerate(data):
+        tree.move(item, '', index)
  
 def refresh_data(trees, root):
     root.title("Allegro Objednávky - Aktualizuji data...")
@@ -425,11 +443,18 @@ def refresh_data(trees, root):
         populate_tree(trees["zpozdena"], gui_data["zpozdena_objednavka"], is_delayed=True)
         populate_tree(trees["blizi_se"], gui_data["blizi_se_termin_expedice"])
         
+        # --- NOVĚ PŘIDÁNO: Automatické seřazení po naplnění daty ---
+        sort_tree_by_date(trees["zpozdena"], col="cas", descending=True)
+        sort_tree_by_date(trees["blizi_se"], col="cas", descending=True)
+        # -----------------------------------------------------------
+        
         now_str = datetime.now().strftime("%H:%M:%S")
         root.title(f"Allegro Hlídač expedice (Aktualizováno: {now_str}) - Pravý klik pro otevření objednávky")
     except Exception as e:
         root.title(f"Chyba při aktualizaci: {e}")
         print(f"Došlo k chybě: {e}")
+
+
  
 def create_table(parent, title, is_delayed=False):
     frame = tk.LabelFrame(parent, text=title, font=("Arial", 11, "bold"), padx=10, pady=10)
@@ -443,7 +468,7 @@ def create_table(parent, title, is_delayed=False):
     tree.heading("polozky", text="Položky")
     tree.heading("stav", text="Stav vyřízení")
     tree.heading("stav_zasilky", text="Stav zásilky")
-    tree.heading("cas", text="Termín expedice")
+    tree.heading("cas", text="Termín expedice", command=lambda: sort_tree_by_date(tree, "cas", descending=True))
     tree.heading("zbyva", text="Zbývá času")
     tree.heading("poznamka", text="Poznámka")
     
