@@ -9,6 +9,7 @@ from tkinter import ttk
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from pathlib import Path
+import threading
 
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -435,24 +436,56 @@ def sort_tree_by_date(tree, col="cas", descending=True):
         tree.move(item, '', index)
  
 def refresh_data(trees, root):
-    root.title("Allegro Objednávky - Aktualizuji data...")
-    root.update()
+    """Spustí načítání dat, ale UI zůstane responzivní."""
+    root.title("Allegro Objednávky - ⏳ Stahuji data na pozadí...")
     
+    # Dočasně vymažeme tabulky a ukážeme uživateli, že se pracuje
+    for tree in trees.values():
+        for item in tree.get_children():
+            tree.delete(item)
+        tree.insert('', tk.END, values=("", "", "⏳ Načítám data z API...", "", "", "", "", "", ""))
+        
+    # Spustíme stahování ve vedlejším vlákně (daemon=True zajistí, že se vlákno ukončí se zavřením aplikace)
+    thread = threading.Thread(target=_fetch_data_worker, args=(trees, root), daemon=True)
+    thread.start()
+
+def _fetch_data_worker(trees, root):
+    """Běží na pozadí a komunikuje s API (neblokuje GUI)."""
     try:
         gui_data = sync_orders()
-        populate_tree(trees["zpozdena"], gui_data["zpozdena_objednavka"], is_delayed=True)
-        populate_tree(trees["blizi_se"], gui_data["blizi_se_termin_expedice"])
-        
-        # --- NOVĚ PŘIDÁNO: Automatické seřazení po naplnění daty ---
-        sort_tree_by_date(trees["zpozdena"], col="cas", descending=True)
-        sort_tree_by_date(trees["blizi_se"], col="cas", descending=True)
-        # -----------------------------------------------------------
-        
-        now_str = datetime.now().strftime("%H:%M:%S")
-        root.title(f"Allegro Hlídač expedice (Aktualizováno: {now_str}) - Pravý klik pro otevření objednávky")
+        # Výsledek bezpečně pošleme zpět do hlavního (Tkinter) vlákna přes root.after()
+        root.after(0, _update_gui_with_data, trees, root, gui_data, None)
     except Exception as e:
-        root.title(f"Chyba při aktualizaci: {e}")
-        print(f"Došlo k chybě: {e}")
+        # V případě chyby pošleme chybu do GUI
+        root.after(0, _update_gui_with_data, trees, root, None, str(e))
+
+def _update_gui_with_data(trees, root, gui_data, error):
+    """Aktualizuje tabulky (Běží zpět v hlavním vlákně)."""
+    if error:
+        root.title(f"Chyba při aktualizaci!")
+        print(f"Došlo k chybě: {error}")
+        for tree in trees.values():
+            for item in tree.get_children():
+                tree.delete(item)
+            tree.insert('', tk.END, values=("", "", f"❌ Chyba: {error}", "", "", "", "", "", ""))
+        return
+
+    # Máme data. Vyčistíme tabulky od dočasného nápisu "Načítám..."
+    for tree in trees.values():
+        for item in tree.get_children():
+            tree.delete(item)
+
+    # Naplníme reálná data
+    populate_tree(trees["zpozdena"], gui_data["zpozdena_objednavka"], is_delayed=True)
+    populate_tree(trees["blizi_se"], gui_data["blizi_se_termin_expedice"])
+    
+    # Rovnou tabulky seřadíme podle nejzazšího termínu (volá funkci z předchozího kroku)
+    sort_tree_by_date(trees["zpozdena"], col="cas", descending=True)
+    sort_tree_by_date(trees["blizi_se"], col="cas", descending=True)
+    
+    # Aktualizujeme titulek
+    now_str = datetime.now().strftime("%H:%M:%S")
+    root.title(f"Allegro Hlídač expedice (Aktualizováno: {now_str}) - Pravý klik pro otevření")
 
 
  
