@@ -328,8 +328,8 @@ def show_context_menu(event, tree):
         tree.selection_set(item)
         tree.focus(item)
         values = tree.item(item, "values")
-        order_id = values[0]
-        login    = values[1]
+        order_id = str(values[0])
+        login    = str(values[1])
  
         menu = tk.Menu(tree, tearoff=0)
         menu.add_command(
@@ -341,6 +341,11 @@ def show_context_menu(event, tree):
             label=f"📋 Kopírovat login: {login}",
             font=("Arial", 10),
             command=lambda l=login: (tree.clipboard_clear(), tree.clipboard_append(l))
+        )
+        menu.add_command(
+            label=f"📋 Kopírovat ID objednávky",
+            font=("Arial", 10),
+            command=lambda i=order_id: (tree.clipboard_clear(), tree.clipboard_append(i))
         )
         menu.post(event.x_root, event.y_root)
  
